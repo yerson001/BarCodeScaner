@@ -1,196 +1,24 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <ArduinoJson.h>
-#include <SPI.h>
-#include <bits/stdc++.h>
-#include <HTTPClient.h>
+#include "Utils.hpp"
 #include <vector>
-#include <algorithm>
-#include <WebServer.h>
-#include <Preferences.h>
 
+Utils *ut = new Utils("yerson", "char5524");
 
-const char* apSSID = "QRSCANNER";  // SSID del AP
-const char* apPassword = "12345678";  // Contraseña del AP
-
-WebServer server;
-Preferences preferences;
-
-
-
-const char* htmlPage = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Configuración de WiFi</title>
-  <style>
-    body { font-family: Arial, sans-serif; }
-    .card { margin: 20px; padding: 20px; border: 1px solid #ccc; }
-    .btn { padding: 10px 15px; background-color: #28a745; color: white; border: none; cursor: pointer; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h2>Cambiar configuración de WiFi</h2>
-    <form id="wifiForm">
-      <label for="ssid">RED WIFI:</label>
-      <input type="text" id="ssid" name="ssid" required><br>
-      <label for="password">CLAVE:</label>
-      <input type="password" id="password" name="password" required><br>
-      <button type="button" class="btn" onclick="saveConfig()">Guardar</button>
-    </form>
-    <div id="response" style="display: none;"></div>
-  </div>
-
-  <script>
-    function saveConfig() {
-      const ssid = document.getElementById('ssid').value;
-      const password = document.getElementById('password').value;
-      fetch(`/save?ssid=${ssid}&password=${password}`)
-        .then(response => response.text())
-        .then(data => {
-          document.getElementById('response').innerHTML = data;
-          document.getElementById('response').style.display = 'block';
-        });
-    }
-  </script>
-</body>
-</html>
-)rawliteral";
-
-void saveConfigHandler();
-
-
-
-
-
-
-
-
-
-#define REDLED 32
-#define BLUELED 33
-#define GREENLED 12
-#define BUTTON_PIN 2
-
-
-
-std::vector<String> processedDnis; 
-const int MAX_PROCESSED_SIZE = 450;
-
-const char ntpServer[] PROGMEM = "pool.ntp.org";
-const long gmtOffset_sec = -5 * 3600;
-const int daylightOffset_sec = 0;
-const int max_retries = 30;
-
-bool isUpper(char c) {
-  return (c >= 'A' && c <= 'Z');
-}
-
-bool isAlpha(char c) {
-  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-}
-
-bool isDigit(char c) {
-  return (c >= '0' && c <= '9');
-}
-
-String caesarCipherDecode(String text, int shift) {
-  String result = "";
-  shift = shift % 26;
-
-  // Lista de caracteres especiales que no serán modificados
-  String specialChars = "áÁéÉíÍóÓúÚñÑ";
-
-  for (int i = 0; i < text.length(); i++) {
-    char c = text[i];
-    
-    // Verifica si el carácter es especial, y si lo es, lo agrega sin cambios
-    if (specialChars.indexOf(c) >= 0) {
-      result += c;
-    } 
-    // Aplica el descifrado César solo en letras alfabéticas
-    else if (isAlpha(c)) {
-      char base = isUpper(c) ? 'A' : 'a';
-      c = (c - base - shift + 26) % 26 + base;
-      result += c;
-    }
-    // Aplica el descifrado a dígitos numéricos
-    else if (isDigit(c)) {
-      c = (c - '0' - shift + 10) % 10 + '0';
-      result += c;
-    } 
-    // Agrega otros caracteres sin cambios
-    else {
-      result += c;
-    }
-  }
-
-  result.replace('$', ' ');
-
-  // Buscar el antepenúltimo grupo de caracteres (DNI)
-  int lastSpaceIndex = result.lastIndexOf(" ");
-  int dniEndIndex = result.lastIndexOf(" ", lastSpaceIndex - 1);
-  int dniStartIndex = result.lastIndexOf(" ", dniEndIndex - 1) + 1;
-
-  String dni = result.substring(dniStartIndex, dniEndIndex);
-
-  return dni;
-}
-
-
-// Constantes movidas a la memoria flash
-
-const char ssid[] PROGMEM = "coleadmin";
-const char password[] PROGMEM = "12345678";
-const char api_url[] PROGMEM = "https://colecheck.com/api/register_assistance";
-const char auth_token[] PROGMEM = "013c329a22103485187ca39546f567eeb012515a";
-
-void RedLed()
-{
-  digitalWrite(REDLED, HIGH);
-  delay(100);
-  digitalWrite(REDLED, LOW);
-  delay(100);
-}
-
-void BlueLed()
-{
-  digitalWrite(BLUELED, HIGH);
-  delay(100);
-  digitalWrite(BLUELED, LOW);
-  delay(100);
-}
-
-void GreenLed()
-{
-  digitalWrite(GREENLED, HIGH);
-  delay(100);
-  digitalWrite(GREENLED, LOW);
-  delay(100);
-}
-
-void scanWifi()
-{
-  GreenLed();
-  BlueLed();
-  RedLed();
-}
-
-//**************** TASK **************** */
+QueueHandle_t attendanceQueue;
 char manualAttendanceType[10] = "entrance";
 char dniData[20];
-
+#define BUTTON_PIN 2
 struct AttendanceData
 {
   char dni[20];
   char type[10];
 };
+bool manualOverride = false;
+bool attendanceToggle = true;
+const char *prevAttendanceType = "";
+std::vector<String> processedDnis;
+const int MAX_PROCESSED_SIZE = 450;
 
-QueueHandle_t attendanceQueue;
-
-
-/*
 void SendDataToServer(void *pvParameters)
 {
   while (1)
@@ -204,79 +32,26 @@ void SendDataToServer(void *pvParameters)
       Serial.print(dataToSend.dni);
       Serial.print(" TYPE: ");
       Serial.println(dataToSend.type);
-      RedLed();
+      ut->redLedBlink();
     }
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
-*/
+void setup()
+{
+  delay(2000);
+  Serial.begin(9600);
+  Serial2.begin(9600, SERIAL_8N1, 13, 14);
+  ut->setLeds();
 
-
-
-
-void SendDataToServer(void *pvParameters) {
-  AttendanceData dataToSend;
-
-  while (1) {
-    if (uxQueueMessagesWaiting(attendanceQueue) > 0) {
-      xQueueReceive(attendanceQueue, &dataToSend, portMAX_DELAY);
-
-      DynamicJsonDocument jsonDoc(128); // JSON document size
-      dataToSend.dni[strcspn(dataToSend.dni, "+")] = 0;
-
-      jsonDoc["dni"] = dataToSend.dni;
-      jsonDoc["type_assistance"] = dataToSend.type;
-
-      String jsonString;
-      serializeJson(jsonDoc, jsonString);
-
-      HTTPClient http;
-      http.begin(api_url);
-      http.addHeader("Content-Type", "application/json");
-      http.addHeader("Authorization", String("token ") + auth_token);
-
-      int httpResponseCode = http.POST(jsonString);
-
-      if (httpResponseCode > 0) {
-        String response = http.getString();
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
-        Serial.print("Response: ");
-        Serial.println(response);
-      } else {
-        Serial.println("Error in sending POST request");
-      }
-
-      http.end();
-
-      Serial.print("SEND: ");
-      Serial.print(dataToSend.dni);
-      Serial.print(" TYPE: ");
-      Serial.println(dataToSend.type);
-    }
-    vTaskDelay(pdMS_TO_TICKS(100));
+  if (ut->connecToWifi())
+  {
+    Serial.println("Conectado a la red WiFi");
   }
+  attendanceQueue = xQueueCreate(100, sizeof(AttendanceData));
+  xTaskCreate(SendDataToServer, "SendDataToServer", 10000, NULL, 1, NULL);
 }
-
-
-
-/**
- * 
- * ACCESPOINT READY
- * 
- */
-
-
-
-/**
- * 
- * END ACCESPOINT READY
- * 
- */
-
-
-
 
 
 void addToQueueIfUnique(String dni, String attendanceType) {
@@ -302,82 +77,14 @@ void addToQueueIfUnique(String dni, String attendanceType) {
   }
 }
 
-
-
-//*************** WIFI ***************** */
-
-bool connectToWiFi()
-{
-  WiFi.begin(ssid, password);
-  Serial.println("Conectando a WiFi...");
-
-  int retry_count = 0;
-  while (WiFi.status() != WL_CONNECTED && retry_count < max_retries)
-  {
-    scanWifi();
-    retry_count++;
-    scanWifi();
-  }
-
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    Serial.println("Conectado a la red WiFi");
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    digitalWrite(GREENLED, HIGH);
-    return true;
-  }
-  else
-  {
-    Serial.println("No se pudo conectar a la red WiFi");
-    digitalWrite(REDLED, HIGH);
-    return false;
-  }
-}
-
-
-
-// Declaración de variables
-bool attendanceToggle = true; // True para "entrance", False para "exit"
-bool manualOverride = false;
-int lastButtonState = LOW;
-unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 50;
-
-const char* prevAttendanceType = "";  
-
-
-void setup()
-{
-  Serial.begin(115200);
-  Serial2.begin(9600, SERIAL_8N1, 13, 14);
-
-  pinMode(REDLED, OUTPUT);
-  pinMode(BLUELED, OUTPUT);
-  pinMode(GREENLED, OUTPUT);
-  pinMode(BUTTON_PIN, INPUT);
-
-  if (connectToWiFi())
-  {
-    Serial.println("Conectado a la red WiFi");
-  }
-
-  attendanceQueue = xQueueCreate(100, sizeof(AttendanceData));
-  xTaskCreate(SendDataToServer, "SendDataToServer", 10000, NULL, 1, NULL);
-}
-
-
 void loop()
 {
-  // Verificar conexión WiFi y LEDs
   if (WiFi.status() != WL_CONNECTED)
   {
-    digitalWrite(GREENLED, LOW);
-    digitalWrite(REDLED, LOW);
-    digitalWrite(BLUELED, LOW);
-
-    if (!connectToWiFi())
+    ut->offLeds();
+    if (!ut->connecToWifi())
     {
-      digitalWrite(REDLED, HIGH);
+      ut->onRedLed();
     }
   }
   else
@@ -390,8 +97,8 @@ void loop()
       return;
     }
 
-    // Determinar el tipo de asistencia automáticamente basado en la hora del día
     const char *attendanceType;
+
     if (manualOverride)
     {
       attendanceType = attendanceToggle ? "entrance" : "exit";
@@ -401,74 +108,61 @@ void loop()
       attendanceType = (timeinfo.tm_hour < 12) ? "entrance" : "exit";
     }
 
-    // Limpia el vector si el tipo de asistencia cambia automáticamente
-    if (!manualOverride && attendanceType != prevAttendanceType)
+    if (manualOverride && attendanceType != prevAttendanceType)
     {
-      Serial.println("Cambio automático en tipo de asistencia, limpiando vector");
-      processedDnis.clear();  
-      prevAttendanceType = attendanceType;  
+      Serial.println("Modo manual activado");
+      processedDnis.clear();
+      prevAttendanceType = attendanceType;
     }
 
-    // Control de LEDs según la hora del día, solo si no está en modo manual
     if (!manualOverride)
     {
-      if (timeinfo.tm_hour < 12) // Mañana
+      if (timeinfo.tm_hour < 12)
       {
-        digitalWrite(BLUELED, HIGH);  // Encender LED azul
-        digitalWrite(GREENLED, HIGH); // Encender LED verde
-        digitalWrite(REDLED, LOW);    // Apagar LED rojo
+        ut->lightsTomorrow();
       }
-      else // Tarde
+      else
       {
-        digitalWrite(BLUELED, LOW);   // Apagar LED azul
-        digitalWrite(GREENLED, HIGH); // Encender LED verde
-        digitalWrite(REDLED, HIGH);   // Encender LED rojo
+        ut->lightsAfternoon();
       }
     }
 
-    // Verificación del botón para alternar entre "entrance" y "exit"
     if (digitalRead(BUTTON_PIN) == HIGH)
     {
-      attendanceToggle = !attendanceToggle; // Cambia entre "entrance" y "exit"
-      manualOverride = true; // Activa el modo manual
+      attendanceToggle = !attendanceToggle;
+      manualOverride = true;
 
-      // Cambia el LED según el nuevo estado
       if (attendanceToggle)
       {
         Serial.println("Manual override: entrance");
-        digitalWrite(BLUELED, HIGH); // Encender LED azul
-        digitalWrite(REDLED, LOW);   // Apagar LED rojo
+        ut->lightsTomorrow();
       }
       else
       {
         Serial.println("Manual override: exit");
-        digitalWrite(BLUELED, LOW);  // Apagar LED azul
-        digitalWrite(REDLED, HIGH);  // Encender LED rojo
+        ut->lightsAfternoon();
       }
-
-      processedDnis.clear();  // Limpia el vector al alternar manualmente
-      delay(500); // Anti-rebote básico
+      processedDnis.clear();
+      delay(500);
     }
 
-    // Recepción de datos del puerto Serial2
     if (Serial2.available())
     {
       String dni = Serial2.readStringUntil('\n');
-      dni = caesarCipherDecode(dni, 3);
+      dni = ut->cesarCipherDecode(dni, 3);
 
       if (dni.length() > 0)
       {
         if (attendanceType == "entrance")
         {
-          BlueLed();
-          digitalWrite(BLUELED, HIGH);
+          ut->blueLedBlink();
+          ut->onBlueLed();
         }
         else
         {
-          RedLed();
-          digitalWrite(REDLED, HIGH);
+          ut->redLedBlink();
+          ut->onRedLed();
         }
-
         addToQueueIfUnique(dni, attendanceType);
       }
     }
