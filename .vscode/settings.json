@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        ".vimrc": "cuda-cpp",
+        "random": "cpp"
+    }
+}
