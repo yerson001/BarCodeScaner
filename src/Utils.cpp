@@ -208,7 +208,7 @@ String Utils::cesarCipherDecode(String text, int shift)
     }
 }
 
-/*
+
  void Utils::sendDataToServer(void *pvParameters)
 {
     Utils *self = static_cast<Utils *>(pvParameters); // Cast pvParameters to Utils*
@@ -223,8 +223,74 @@ String Utils::cesarCipherDecode(String text, int shift)
             Serial.print(dataToSend.dni);
             Serial.print(" TYPE: ");
             Serial.println(dataToSend.type);
-            self->redLedBlink(); // Use 'self' to call instance-specific methods
+            //self->redLedBlink(); // Use 'self' to call instance-specific methods
         }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+
+/*
+
+void Utils::sendDataToServer(void *pvParameters)
+{
+    AttendanceData dataToSend;
+    Utils *self = static_cast<Utils *>(pvParameters);
+
+    while (1)
+    {
+        // Usamos xQueuePeek para "espiar" el primer elemento de la cola sin eliminarlo.
+        // Solo lo eliminaremos cuando el envío sea exitoso.
+        if (xQueuePeek(self->attendanceQueue, &dataToSend, portMAX_DELAY))
+        {
+            // Verificamos la conexión WiFi antes de intentar enviar
+            if (WiFi.status() != WL_CONNECTED) {
+                Serial.println("Sin conexión WiFi, reintentando envío en 5 segundos...");
+                vTaskDelay(pdMS_TO_TICKS(5000));
+                continue; // Vuelve al inicio del bucle para reintentar
+            }
+
+            DynamicJsonDocument jsonDoc(256); // Aumentamos el tamaño para más seguridad
+            dataToSend.dni[strcspn(dataToSend.dni, "+")] = 0;
+
+            jsonDoc["dni"] = dataToSend.dni;
+            jsonDoc["type_assistance"] = dataToSend.type;
+
+            String jsonString;
+            serializeJson(jsonDoc, jsonString);
+
+            HTTPClient http;
+            http.begin(api_url); // Especificar el destino
+            http.addHeader("Content-Type", "application/json");
+            http.addHeader("Authorization", String("token ") + auth_token);
+
+            int httpResponseCode = http.POST(jsonString);
+
+            // Un código de respuesta 2xx (ej. 200 OK, 201 Created) indica éxito.
+            if (httpResponseCode >= 200 && httpResponseCode < 300)
+            {
+                // ¡Éxito! Ahora sí eliminamos el elemento de la cola.
+                xQueueReceive(self->attendanceQueue, &dataToSend, 0); // El 0 es para no bloquear.
+
+                String response = http.getString();
+                Serial.print("HTTP Response code: ");
+                Serial.println(httpResponseCode);
+                Serial.print("Response: ");
+                Serial.println(response);
+                self->greenLedBlink(); // Indicador visual de envío exitoso
+            }
+            else
+            {
+                Serial.print("Error en el envío POST, código: ");
+                Serial.println(httpResponseCode);
+                Serial.println("Reintentando en 5 segundos...");
+                // No eliminamos el dato de la cola. Se reintentará automáticamente.
+                vTaskDelay(pdMS_TO_TICKS(5000)); // Esperamos antes de reintentar para no saturar.
+            }
+
+            http.end();
+        }
+        // Si la cola está vacía, esperamos un poco para no consumir CPU.
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
@@ -235,7 +301,7 @@ const char api_url[] = "https://colecheck.com/api/register_assistance";
 const char auth_token[] = "7925427fe1617bf00edf7169572b11614edf8d32"; // circa token
 //const char auth_token[] = "2e8c37e4a9023b3b20c952d85addc06b1d2ae559"; // prueba token
 
-
+/*
 void Utils::sendDataToServer(void *pvParameters)
 {
 
@@ -286,7 +352,7 @@ void Utils::sendDataToServer(void *pvParameters)
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-}
+}*/
 
 void Utils::addToQueueIfUnique(String dni, String attendanceType)
 {

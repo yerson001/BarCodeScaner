@@ -1,19 +1,152 @@
 #include <Arduino.h>
+#include "Utils.hpp"
+#include <vector>
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
+
+
+Utils *ut = new Utils();
+
+//ESP32AP::Config apConfig;
+
+/************** TASK *******
+ *   SETTING CONFIG
+ *   @brief: Set the pins of the LEDs as OUTPUT
+ *   @param: pool.ntp.org
+ *   @return:
+ **************************** */
+char manualAttendanceType[10] = "entrance";
+char dniData[20];
+bool manualOverride = false;
+bool attendanceToggle = true;
+const char *prevAttendanceType = "";
+
+//String wifi = "CASA2 2.4G"; String password = "isaias25++";
+//String wifi = "CLARO_B253"; String password = "5wEs6DQpcp";
+String wifi = "UCSP-SALA"; String password = "S@l@r3u570p";
+
 
 void setup()
 {
-  delay(2000); 
-  Serial.begin(115200);  
-  Serial.println("Iniciando comunicación serie con el GM75...");
+  ut->onBuzzer();
+  delay(2000);
+  ut->onBuzzer();
+  //Serial.begin(9600);
+  //Serial2.begin(9600, SERIAL_8N1, 13, 14);
+  Serial.begin(115200);
+  Serial2.begin(115200, SERIAL_8N1, 13, 14);
+   
+ 
+  ut->setLeds();
+
+  Serial.println("******** INIT SYSTEM ********");
+
+  //if (ut->connecToWifi("CLARO_B253", "5wEs6DQpcp"))
+  //if (ut->connecToWifi("YVONNE_EXT_5G", "PRESIOSARAV77"))
+  if (ut->connecToWifi(wifi.c_str(),password.c_str()))
+  {
+    Serial.println("Conectado a la red WiFi");
+  }
 }
 
-void loop() {   
-  if (Serial.available()) {  
-    String data = Serial.readStringUntil('\n');  
-    Serial.println("Datos recibidos del GM75: " + data); 
-  } else {  
-    Serial.println("Esperando datos ----------");  
-  }  
+void loop()
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    ut->offLeds();
+    if (!ut->connecToWifi(wifi.c_str(),password.c_str()))
+    {
+      ut->onRedLed();
+    }
+  }
+  else
+  {
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo))
+    {
+      Serial.println("Failed to obtain time");
+      delay(1000);
+      return;
+    }
 
-  delay(1000);  
+    const char *attendanceType;
+
+    if (manualOverride)
+    {
+      attendanceType = attendanceToggle ? "entrance" : "exit";
+    }
+    else
+    {
+      attendanceType = (timeinfo.tm_hour < 12) ? "entrance" : "exit";
+    }
+
+    if (manualOverride && attendanceType != prevAttendanceType)
+    {
+      Serial.println("Modo manual activado");
+      //ut->clearProcessedDnis();
+      prevAttendanceType = attendanceType;
+    }
+
+    if (!manualOverride)
+    {
+      if (timeinfo.tm_hour < 12)
+      {
+        ut->lightsTomorrow();
+      }
+      else
+      {
+        ut->lightsAfternoon();
+      }
+    }
+
+    if (digitalRead(BUTTON_PIN) == HIGH)
+    {
+      attendanceToggle = !attendanceToggle;
+      manualOverride = true;
+
+      if (attendanceToggle)
+      {
+        Serial.println("Manual override: entrance");
+        ut->lightsTomorrow();
+      }
+      else
+      {
+        Serial.println("Manual override: exit");
+        ut->lightsAfternoon();
+      }
+      //ut->clearProcessedDnis();
+      delay(500);
+    }
+
+    if (Serial2.available())
+    {
+      ut->onBuzzer();
+      //ut->greenFlagLedBlink();
+      String dni = Serial2.readStringUntil('\n');
+      
+
+      Serial.println("BEFORE DNI: ");
+      Serial.println(dni);
+      dni = ut->cesarCipherDecode(dni, 3);
+      
+      Serial.println("AFTER DNI: ");
+      Serial.println(dni);
+
+      
+
+      if (dni.length() > 0)
+      {
+        if (attendanceType == "entrance")
+        {
+          ut->onBlueLed();
+        }
+        else
+        {
+          ut->onRedLed();
+        }
+        ut->greenLedBlink();
+        ut->addToQueueIfUnique(dni, attendanceType);
+      }
+    }
+  }
 }
